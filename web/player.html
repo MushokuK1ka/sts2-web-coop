@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>尖塔 · 网页联机</title><link rel="icon" href="data:,">
+<style>
+*{box-sizing:border-box}html,body{margin:0;height:100%;background:#10131b;color:#eee;font:14px system-ui,sans-serif;overflow:hidden}
+body{display:flex;flex-direction:column}header{display:flex;gap:12px;align-items:center;padding:8px 16px;background:#191f2c;min-height:46px}header strong{color:#e5c57c}#status{flex:1;color:#a6b2c6}button{background:#293348;border:1px solid #49566d;color:#eee;border-radius:7px;padding:7px 13px;cursor:pointer}
+main{position:relative;flex:1;display:flex;align-items:center;justify-content:center;min-height:0}canvas{max-width:100%;max-height:100%;object-fit:contain;touch-action:none;outline:none}#hint{position:absolute;color:#a6b2c6;text-align:center;pointer-events:none}footer{padding:6px 12px;display:flex;flex-wrap:wrap;gap:7px;justify-content:center;background:#191f2c}footer button{padding:7px 16px}
+</style>
+<header><strong id="title">尖塔联机</strong><span id="status">正在连接…</span><button id="reconnect">重新连接</button><button id="fullscreen">全屏</button></header>
+<main><canvas id="screen" tabindex="0"></canvas><div id="hint">等待主机游戏画面…<br>手机建议横屏游玩</div></main>
+<footer><button data-key="Escape">返回 / 菜单</button><button data-key="m">地图</button><button data-key="d">牌组</button><button data-key="e">结束回合</button><button id="right">右键查看</button></footer>
+<script>
+const seat=location.pathname.split('/').pop(),roomId='ROOM_ID_PLACEHOLDER',screen=document.querySelector('#screen'),ctx=screen.getContext('2d'),status=document.querySelector('#status'),hint=document.querySelector('#hint');
+document.querySelector('#title').textContent=`尖塔联机 · 玩家 ${({'A':'一','B':'二','C':'三','D':'四'})[seat]}`;
+const rightButton=document.querySelector('#right');
+let ws, connectionAttempt=0, pointer=null, right=false, lastMove=0, connected=false, hasFrame=false;
+function send(data, socket=ws) {
+ if(socket?.readyState!==WebSocket.OPEN)return false;
+ socket.send(JSON.stringify(data));
+ return true;
+}
+async function connect(){
+ const attempt=++connectionAttempt;
+ cancelInput();
+ const previous=ws;
+ ws=null;
+ connected=false;
+ hasFrame=false;
+ status.textContent='正在连接…';
+ if(previous&&previous.readyState!==WebSocket.CLOSED){
+   await new Promise(resolve=>{
+     const timer=setTimeout(resolve,1500);
+     previous.addEventListener('close',()=>{clearTimeout(timer);resolve()},{once:true});
+     previous.close();
+   });
+ }
+ if(attempt!==connectionAttempt)return;
+ const endpoint=`${location.protocol==='https:'?'wss:':'ws:'}//${location.host}/stream/${roomId}/${seat}`;
+ const socket=new WebSocket(endpoint);
+ ws=socket;
+ socket.binaryType='blob';
+ let frames=0, lastFps=performance.now(), opened=false;
+ socket.onopen=()=>{
+   if(ws!==socket)return;
+   opened=true;
+   status.textContent='已连接，等待画面';
+ };
+ socket.onclose=()=>{
+   if(ws!==socket)return;
+   connected=false;
+   hasFrame=false;
+   pointer=null;
+   status.textContent=opened?'连接已断开，点击重新连接':'连接失败，请关闭此席位的其他页面后重试';
+ };
+ socket.onmessage=async event=>{
+   if(ws!==socket)return;
+   if(typeof event.data==='string'){
+     const data=JSON.parse(event.data);
+     connected=Boolean(data.connected);
+     if(!connected){cancelInput();status.textContent='等待游戏连接…'}
+     return;
+   }
+   try{
+     const image=await createImageBitmap(event.data);
+     if(ws!==socket){image.close();return}
+     if(screen.width!==image.width||screen.height!==image.height){
+       screen.width=image.width;
+       screen.height=image.height;
+     }
+     ctx.drawImage(image,0,0);
+     image.close();
+     hasFrame=true;
+     hint.style.display='none';
+     frames++;
+     const now=performance.now();
+     if(connected&&now-lastFps>1000){
+       status.textContent=`已连接 · ${Math.round(frames*1000/(now-lastFps))} 帧/秒`;
+       frames=0;
+       lastFps=now;
+     }
+   }finally{send({type:'ack'},socket)}
+ };
+}
+function position(event, clampToImage=false){
+ const bounds=screen.getBoundingClientRect();
+ const scale=Math.min(bounds.width/screen.width,bounds.height/screen.height);
+ if(!scale)return null;
+ const width=screen.width*scale, height=screen.height*scale;
+ const x=(event.clientX-bounds.left-(bounds.width-width)/2)/width;
+ const y=(event.clientY-bounds.top-(bounds.height-height)/2)/height;
+ if(!clampToImage&&(x<0||x>1||y<0||y>1))return null;
+ return {x:Math.max(0,Math.min(1,x)),y:Math.max(0,Math.min(1,y))};
+}
+function cancelInput(){
+ pointer=null;
+ send({type:'release'});
+}
+screen.onpointerdown=event=>{
+ if(!connected||!hasFrame||!event.isPrimary||pointer)return;
+ const coords=position(event);
+ const button=right||event.button===2?2:0;
+ if(!coords||![0,2].includes(event.button))return;
+ event.preventDefault();
+ screen.focus({preventScroll:true});
+ send({type:'move',...coords});
+ if(!send({type:'down',button,...coords}))return;
+ pointer={id:event.pointerId,button};
+ // Capture is optional: window-level listeners still complete the click if it fails.
+ try{screen.setPointerCapture(event.pointerId)}catch{}
+};
+window.addEventListener('pointermove',event=>{
+ if(!connected||!hasFrame||!event.isPrimary)return;
+ if(pointer?event.pointerId!==pointer.id:event.target!==screen)return;
+ const coords=position(event,Boolean(pointer));
+ const now=performance.now();
+ if(!coords||now-lastMove<16)return;
+ lastMove=now;
+ send({type:'move',...coords});
+});
+window.addEventListener('pointerup',event=>{
+ if(event.pointerId!==pointer?.id)return;
+ const {button}=pointer;
+ pointer=null;
+ const coords=position(event,true);
+ if(coords){
+   send({type:'move',...coords});
+   send({type:'up',button,...coords});
+ }else cancelInput();
+ if(right){right=false;rightButton.style.background=''}
+});
+window.addEventListener('pointercancel',event=>{if(event.pointerId===pointer?.id)cancelInput()});
+screen.addEventListener('lostpointercapture',event=>{if(event.pointerId===pointer?.id)cancelInput()});
+screen.oncontextmenu=e=>e.preventDefault();
+screen.onwheel=event=>{
+ event.preventDefault();
+ const coords=position(event);
+ if(connected&&hasFrame&&coords)send({type:'wheel',delta:event.deltaY,...coords});
+};
+screen.onkeydown=event=>{if(event.ctrlKey||event.altKey||event.metaKey)return;event.preventDefault();if(!event.repeat)send({type:'key',key:event.key,pressed:true})};
+screen.onkeyup=event=>{event.preventDefault();send({type:'key',key:event.key,pressed:false})};
+window.addEventListener('blur',cancelInput);
+document.addEventListener('visibilitychange',()=>{if(document.hidden)cancelInput()});
+document.querySelectorAll('[data-key]').forEach(button=>button.onclick=()=>{
+ const socket=ws, key=button.dataset.key;
+ if(!connected||!hasFrame||!send({type:'key',key,pressed:true},socket))return;
+ setTimeout(()=>send({type:'key',key,pressed:false},socket),90);
+ screen.focus();
+});
+rightButton.onclick=()=>{right=!right;rightButton.style.background=right?'#6d5730':''};
+document.querySelector('#fullscreen').onclick=()=>document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen();
+document.querySelector('#reconnect').onclick=connect;
+connect();
+</script></html>

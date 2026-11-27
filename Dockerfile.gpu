@@ -1,0 +1,7 @@
+FROM sts2-web-worker:0.3
+COPY vendor/virtualgl_3.1.5_amd64.deb /tmp/virtualgl.deb
+RUN echo 'df3f7788ce41b182a47c0d298e5cd6d2d63579522cb41825970b7726e825485e  /tmp/virtualgl.deb' | sha256sum -c - \
+    && apt-get -o Acquire::ForceIPv4=true update \
+    && apt-get -o Acquire::ForceIPv4=true install -y --no-install-recommends /tmp/virtualgl.deb \
+    && rm -rf /var/lib/apt/lists/* /tmp/virtualgl.deb
+COPY worker/entry.py /opt/worker/entry.py

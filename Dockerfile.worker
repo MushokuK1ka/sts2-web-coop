@@ -1,0 +1,17 @@
+ARG UBUNTU_BASE=public.ecr.aws/docker/library/ubuntu:24.04
+FROM ${UBUNTU_BASE}
+ENV DEBIAN_FRONTEND=noninteractive PYTHONUNBUFFERED=1
+RUN apt-get -o Acquire::ForceIPv4=true update && apt-get -o Acquire::ForceIPv4=true install -y --no-install-recommends \
+    python3 python3-venv xvfb xauth pulseaudio wine64 libgl1 libgl1-mesa-dri libegl1 libgbm1 \
+    libx11-6 libxcursor1 libxinerama1 libxrandr2 libxi6 libxkbcommon0 \
+    libicu74 libssl3t64 libasound2t64 libfontconfig1 libvulkan1 \
+    mesa-vulkan-drivers fonts-noto-cjk ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+RUN python3 -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir --index-url ${PIP_INDEX_URL} aiohttp==3.14.5
+ENV PATH=/opt/venv/bin:$PATH
+WORKDIR /opt/worker
+COPY worker/ /opt/worker/
+EXPOSE 7860
+STOPSIGNAL SIGTERM
+CMD ["python", "-u", "/opt/worker/entry.py"]

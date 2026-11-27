@@ -1,0 +1,29 @@
+services:
+  lobby:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${WEB_PORT:-8088}:8088"
+    environment:
+      SITE_PASSWORD: ${SITE_PASSWORD:?set SITE_PASSWORD in .env}
+      GAME_ROOT: ${GAME_ROOT:?set the absolute Linux game directory}
+      DOCKER_STATE_ROOT: ${STATE_ROOT:?set the absolute state directory}
+      WORKER_IMAGE: ${WORKER_IMAGE:-sts2-web-worker:0.3}
+      GAME_RUNTIME: ${GAME_RUNTIME:-auto}
+      SOFTWARE_RENDER: ${SOFTWARE_RENDER:-1}
+      GPU_DRIVER_ROOT: ${GPU_DRIVER_ROOT:-}
+      MAX_ROOMS: ${MAX_ROOMS:-2}
+      ROOM_MEMORY_LIMIT: ${ROOM_MEMORY_LIMIT:-12g}
+      ROOM_CPU_LIMIT: ${ROOM_CPU_LIMIT:-8}
+      SECURE_COOKIES: ${SECURE_COOKIES:-0}
+    volumes:
+      - ${STATE_ROOT}:/state
+      - ${GAME_ROOT}:${GAME_ROOT}:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+    networks:
+      - rooms
+networks:
+  rooms:
+    name: sts2-web-coop
