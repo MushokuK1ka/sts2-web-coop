@@ -45,3 +45,9 @@ The bridge targets 24 FPS. Actual frame rate depends on host load, client decodi
 python -m pip install -r requirements.txt
 python -m unittest discover -s tests -v
 ```
+
+## License
+
+The framework source code is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE). This license does not authorize commercial use, including paid hosting or selling access to the framework. The full terms in `LICENSE` govern permitted use.
+
+This license covers the framework only. The host supplies their own game installation and third-party components separately.
