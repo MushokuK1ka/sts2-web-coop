@@ -14,10 +14,11 @@ from aiohttp import web, WSMsgType
 BASE = Path(__file__).resolve().parent
 CONFIG = BASE / 'access.json'
 if os.getenv('WEB_ACCESS_KEYS'):
-    CONFIG.write_text(os.environ['WEB_ACCESS_KEYS'], 'utf-8')
-if not CONFIG.exists():
-    CONFIG.write_text(json.dumps({s:secrets.token_urlsafe(24) for s in ('A','B')},indent=2), 'utf-8')
-KEYS = json.loads(CONFIG.read_text('utf-8'))
+    KEYS = json.loads(os.environ['WEB_ACCESS_KEYS'])
+else:
+    if not CONFIG.exists():
+        CONFIG.write_text(json.dumps({s:secrets.token_urlsafe(24) for s in ('A','B')},indent=2), 'utf-8')
+    KEYS = json.loads(CONFIG.read_text('utf-8'))
 
 @dataclass
 class Seat:
@@ -160,8 +161,10 @@ async def main():
                     web.get('/api/{seat}/status',status),web.get('/api/{seat}/frame',frame),web.get('/ws/{seat}',websocket)])
     runner = web.AppRunner(app, access_log=None)
     await runner.setup()
-    await web.TCPSite(runner,'0.0.0.0',7860).start()
-    print('Web gateway ready on port 7860; private bridge 127.0.0.1:7861',flush=True)
+    host = os.getenv('WEB_BIND', '0.0.0.0')
+    port = int(os.getenv('WEB_STREAM_PORT', '7860'))
+    await web.TCPSite(runner,host,port).start()
+    print(f'Web gateway ready on {host}:{port}; private bridge 127.0.0.1:7861',flush=True)
     async with server: await server.serve_forever()
 
 if __name__ == '__main__':

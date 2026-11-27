@@ -1,4 +1,4 @@
-"""Linux room lobby and browser gateway. Game workers are real Docker containers."""
+"""Room lobby and browser gateway for Docker and native Windows workers."""
 import asyncio
 from contextlib import suppress
 import functools
@@ -196,8 +196,12 @@ def create_app(state=None, workers=None, password=None):
                 password_file.write_text(secrets.token_urlsafe(12), 'utf-8')
                 password_file.chmod(0o600)
             password = password_file.read_text('utf-8').strip()
-    rooms = Rooms(state / 'rooms.sqlite', int(os.getenv('MAX_ROOMS', '4')))
+    if workers is None and os.name == 'nt':
+        from windows_worker import WindowsWorkers
+        workers = WindowsWorkers(state)
     runner = workers or DockerWorkers(state)
+    room_limit = getattr(runner, 'max_rooms', int(os.getenv('MAX_ROOMS', '4')))
+    rooms = Rooms(state / 'rooms.sqlite', room_limit)
     app = web.Application(client_max_size=16 * 1024)
     app['rooms'], app['workers'], app['tasks'] = rooms, runner, set()
 
@@ -273,13 +277,18 @@ def create_app(state=None, workers=None, password=None):
             for _ in range(300):
                 if room['state'] != 'starting':
                     return
+                if hasattr(runner, 'is_alive') and not runner.is_alive(room):
+                    break
                 ready = True
                 for m in room['members']:
                     try:
                         async with app['http'].get(room['worker']['url'] + '/api/' + m['seat'] + '/status',
                                 headers={'X-Access-Key': m['key']}, timeout=3) as response:
                             status = await response.json()
-                            ready = ready and bool(status.get('connected')) and status.get('scene') in ('NMainMenu', 'NRun')
+                            seat_ready = bool(status.get('connected')) and status.get('scene') in ('NMainMenu', 'NRun')
+                            if getattr(runner, 'requires_character_select', False):
+                                seat_ready = seat_ready and 'NCharacterSelectScreen' in status.get('screens', [])
+                            ready = ready and seat_ready
                     except Exception:
                         ready = False
                 if ready and room['state'] == 'starting':
@@ -288,6 +297,10 @@ def create_app(state=None, workers=None, password=None):
                     return
                 await asyncio.sleep(1)
             if room['state'] == 'starting':
+                if hasattr(runner, 'is_alive'):
+                    await background_call(runner.stop, room)
+                if room['state'] != 'starting':
+                    return
                 room['state'] = 'failed'
                 rooms.save(room)
         except asyncio.CancelledError:
@@ -386,7 +399,8 @@ def create_app(state=None, workers=None, password=None):
     async def startup(app):
         app['http'] = ClientSession()
         for room in rooms.rooms.values():
-            if room['state'] == 'starting':
+            if room['state'] == 'starting' or (
+                    room['state'] == 'playing' and hasattr(runner, 'is_alive') and not runner.is_alive(room)):
                 room['state'] = 'failed'
                 rooms.save(room)
 
@@ -396,6 +410,8 @@ def create_app(state=None, workers=None, password=None):
             with suppress(asyncio.CancelledError):
                 await task
         await app['http'].close()
+        if hasattr(runner, 'shutdown'):
+            await background_call(runner.shutdown)
         rooms.db.close()
 
     app.add_routes([web.get('/', index), web.get('/api/health', health), web.post('/api/login', login),

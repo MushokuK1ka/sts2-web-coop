@@ -43,6 +43,9 @@ public static class Main
             prefix: new HarmonyMethod(typeof(Main), nameof(GlobalMouse)));
         harmony.Patch(AccessTools.Method(typeof(CanvasItem), nameof(CanvasItem.GetLocalMousePosition)),
             prefix: new HarmonyMethod(typeof(Main), nameof(LocalMouse)));
+        if (CommandLineHelper.HasArg("web-local-only"))
+            harmony.Patch(AccessTools.Method(typeof(ENetConnection), nameof(ENetConnection.CreateHostBound)),
+                prefix: new HarmonyMethod(typeof(Main), nameof(BindEnetLocally)));
         _tree = (SceneTree)Engine.GetMainLoop();
         Input.UseAccumulatedInput = false;
         _tree.ProcessFrame += Tick;
@@ -52,6 +55,10 @@ public static class Main
     }
 
     private static bool Focused(ref bool __result) { __result = true; return false; }
+    private static void BindEnetLocally(ref string __0)
+    {
+        if (__0 == "0.0.0.0") __0 = "127.0.0.1";
+    }
     private static Vector2 LogicalMouse()
     {
         var win = DisplayServer.WindowGetSize();
